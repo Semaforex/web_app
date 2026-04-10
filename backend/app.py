@@ -257,7 +257,11 @@ def complete_task(task_id: str):
 
         users.update_one(
             {"_id": "singleton"},
-            {"$setOnInsert": _user_doc_defaults(), "$inc": {"points": points}, "$set": {"updated_at": now}},
+            {
+                "$setOnInsert": {"_id": "singleton"},
+                "$inc": {"points": points},
+                "$set": {"updated_at": now},
+            },
             upsert=True,
         )
 
@@ -307,7 +311,11 @@ def purchase():
         now = _now_utc()
         users.update_one(
             {"_id": "singleton"},
-            {"$setOnInsert": _user_doc_defaults(), "$inc": {"points": -cost}, "$set": {"updated_at": now}},
+            {
+                "$setOnInsert": {"_id": "singleton"},
+                "$inc": {"points": -cost},
+                "$set": {"updated_at": now},
+            },
             upsert=True,
         )
         purchases.insert_one({"user_id": "singleton", "item_id": item_id, "cost": cost, "created_at": now})
