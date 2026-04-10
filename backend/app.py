@@ -1,5 +1,5 @@
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
@@ -90,6 +90,7 @@ def _task_to_json(task: dict) -> dict:
         "deadline": task.get("deadline"),
         "difficulty": task.get("difficulty"),
         "points": task.get("points"),
+        "repeatDaily": bool(task.get("repeat_daily", False)),
         "completed": bool(task.get("completed", False)),
         "createdAt": task.get("created_at").isoformat() if task.get("created_at") else None,
         "completedAt": task.get("completed_at").isoformat() if task.get("completed_at") else None,
@@ -110,6 +111,13 @@ def _handle_permission_error(e: PermissionError):
 
 @app.errorhandler(RuntimeError)
 def _handle_runtime_error(e: RuntimeError):
+    return jsonify({"error": str(e)}), 500
+
+
+@app.errorhandler(Exception)
+def _handle_unexpected_error(e: Exception):
+    # Avoid turning common client mistakes into blank 500s.
+    # In production you might hide details; for now we surface a message for debugging.
     return jsonify({"error": str(e)}), 500
 
 
@@ -168,12 +176,14 @@ def create_task():
     points = _safe_int(body.get("points"))
     if points is not None and points < 0:
         return jsonify({"error": "Points must be a non-negative integer."}), 400
+    repeat_daily = bool(body.get("repeatDaily", False))
 
     doc = {
         "name": name,
         "deadline": deadline or None,
         "difficulty": difficulty,
         "points": points or 0,
+        "repeat_daily": repeat_daily,
         "completed": False,
         "created_at": _now_utc(),
         "completed_at": None,
@@ -192,6 +202,7 @@ def create_task():
 @app.route("/api/tasks/<task_id>/complete", methods=["POST"])
 def complete_task(task_id: str):
     _require_auth()
+    from bson.errors import InvalidId  # local import keeps startup lean
     from bson.objectid import ObjectId  # local import keeps startup lean
 
     client = _get_mongo_client()
@@ -200,7 +211,12 @@ def complete_task(task_id: str):
         tasks = db.tasks
         users = db.users
 
-        task = tasks.find_one({"_id": ObjectId(task_id)})
+        try:
+            oid = ObjectId(task_id)
+        except (InvalidId, TypeError):
+            return jsonify({"error": "Invalid task id."}), 400
+
+        task = tasks.find_one({"_id": oid})
         if not task:
             return jsonify({"error": "Task not found."}), 404
         if task.get("completed"):
@@ -214,6 +230,31 @@ def complete_task(task_id: str):
             {"$set": {"completed": True, "completed_at": now}},
         )
 
+        new_task_json = None
+        if task.get("repeat_daily"):
+            next_deadline = None
+            raw_deadline = task.get("deadline")
+            if isinstance(raw_deadline, str) and raw_deadline.strip():
+                try:
+                    d = datetime.strptime(raw_deadline.strip(), "%Y-%m-%d").date()
+                    next_deadline = (d + timedelta(days=1)).isoformat()
+                except Exception:
+                    next_deadline = None
+
+            next_doc = {
+                "name": task.get("name"),
+                "deadline": next_deadline,
+                "difficulty": task.get("difficulty"),
+                "points": int(task.get("points", 0) or 0),
+                "repeat_daily": True,
+                "completed": False,
+                "created_at": now,
+                "completed_at": None,
+            }
+            res = tasks.insert_one(next_doc)
+            created_next = tasks.find_one({"_id": res.inserted_id})
+            new_task_json = _task_to_json(created_next or next_doc)
+
         users.update_one(
             {"_id": "singleton"},
             {"$setOnInsert": _user_doc_defaults(), "$inc": {"points": points}, "$set": {"updated_at": now}},
@@ -222,7 +263,16 @@ def complete_task(task_id: str):
 
         user = _get_user(db)
         updated = tasks.find_one({"_id": task["_id"]})
-        return jsonify({"task": _task_to_json(updated or task), "points": int(user.get("points", 0))}), 200
+        return (
+            jsonify(
+                {
+                    "task": _task_to_json(updated or task),
+                    "newTask": new_task_json,
+                    "points": int(user.get("points", 0)),
+                }
+            ),
+            200,
+        )
     finally:
         client.close()
 

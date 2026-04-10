@@ -100,6 +100,7 @@ function TasksTab({ token, points, onPoints }) {
   const [deadline, setDeadline] = useState('');
   const [difficulty, setDifficulty] = useState('');
   const [taskPoints, setTaskPoints] = useState('');
+  const [repeatDaily, setRepeatDaily] = useState(false);
   const [creating, setCreating] = useState(false);
 
   const load = async () => {
@@ -130,6 +131,7 @@ function TasksTab({ token, points, onPoints }) {
         deadline: deadline || null,
         difficulty: difficulty || null,
         points: taskPoints === '' ? null : Number(taskPoints),
+        repeatDaily,
       };
       const data = await apiFetch('/api/tasks', {
         token,
@@ -141,6 +143,7 @@ function TasksTab({ token, points, onPoints }) {
       setDeadline('');
       setDifficulty('');
       setTaskPoints('');
+      setRepeatDaily(false);
     } catch (err) {
       setError(err?.message || 'Failed to create task');
     } finally {
@@ -154,6 +157,7 @@ function TasksTab({ token, points, onPoints }) {
       const data = await apiFetch(`/api/tasks/${id}/complete`, { token, method: 'POST' });
       onPoints(data.points);
       setTasks((prev) => prev.map((t) => (t.id === id ? data.task : t)));
+      if (data.newTask) setTasks((prev) => [data.newTask, ...prev]);
     } catch (err) {
       setError(err?.message || 'Failed to complete task');
     }
@@ -177,7 +181,7 @@ function TasksTab({ token, points, onPoints }) {
             </label>
             <label className="field">
               <div className="label">Deadline (optional)</div>
-              <input value={deadline} onChange={(e) => setDeadline(e.target.value)} placeholder="e.g. 2026-04-20" />
+              <input type="date" value={deadline} onChange={(e) => setDeadline(e.target.value)} />
             </label>
             <label className="field">
               <div className="label">Difficulty (optional)</div>
@@ -193,6 +197,17 @@ function TasksTab({ token, points, onPoints }) {
               />
             </label>
           </div>
+          <label className="field" style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+            <input
+              type="checkbox"
+              checked={repeatDaily}
+              onChange={(e) => setRepeatDaily(e.target.checked)}
+              style={{ width: 18, height: 18 }}
+            />
+            <div className="label" style={{ margin: 0 }}>
+              Repeats daily
+            </div>
+          </label>
           {error ? <div className="error">{error}</div> : null}
           <div className="row">
             <button className="button" disabled={creating || !name.trim()}>
@@ -217,6 +232,7 @@ function TasksTab({ token, points, onPoints }) {
                   {t.deadline ? <span>Deadline: {t.deadline}</span> : null}
                   {t.difficulty ? <span>Difficulty: {t.difficulty}</span> : null}
                   <span>Points: {t.points ?? 0}</span>
+                  {t.repeatDaily ? <span>Repeats: daily</span> : null}
                 </div>
               </div>
               <div className="itemActions">
